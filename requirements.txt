@@ -1,3 +1,10 @@
+# Shared
 aiohttp>=3.9
 pydub>=0.25
 python-dotenv>=1.0
+
+# ElevenLabs engine — only needs aiohttp above.
+
+# Piper engine — uncomment if you want offline TTS.
+# Heavy: pulls onnxruntime (~50 MB) and torch is NOT required.
+# piper-tts>=1.2

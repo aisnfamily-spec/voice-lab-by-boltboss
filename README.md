@@ -1,19 +1,19 @@
-# ElevenLabs TTS — minimal CLI
+# Voice Lab
 
-A self-contained script that turns a `.txt` script into an `.mp3` via ElevenLabs.
+A no-frills TTS CLI: feed it a `.txt`, get an `.mp3`. Two engines:
 
-It does **only** the things you can share publicly:
+| Engine | Cost | Quality | Internet | Setup |
+| --- | --- | --- | --- | --- |
+| **ElevenLabs** | **paid** API key | premium | required | 30 sec — register, copy key |
+| **Piper** | **free** — runs locally | decent (varies by voice) | not needed after model download | 2 min — pip install + download model |
 
-- Authenticates with a paid `xi-api-key`
-- Splits long scripts into sentence-aware chunks
-- Calls `/v1/text-to-speech/{voice_id}/stream` in parallel
-- Stitches MP3 chunks back together with `pydub`
+Both engines share the same chunker, parallelism story (Piper is sequential for safety), and stitching pipeline. Only the inner HTTP/inference call differs.
 
-It deliberately leaves out everything that depends on private accounts or platform-evasion infrastructure (Firebase free-tier login, proxy ports, IP-burnt rotation, captcha bypass, account quarantine). If you hit `429`, lower `--workers` or upgrade your ElevenLabs plan.
+What's intentionally **not** here: Firebase free-tier login, proxy rotation, captcha bypass, multi-account quarantine. Just two clean, public-friendly paths.
 
 ## Install
 
-Requires **Python 3.10+** and **ffmpeg** (used by `pydub` for MP3 stitching).
+Requires **Python 3.10+** and **ffmpeg** (used by `pydub` for audio stitching).
 
 ```bash
 # macOS
@@ -27,54 +27,92 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configure
+If you want the **Piper** engine, also install it (and download a voice — see below):
 
-Copy `.env.example` → `.env` and fill in your key + voice id:
+```bash
+pip install piper-tts
+```
+
+## Configure
 
 ```bash
 cp .env.example .env
 $EDITOR .env
 ```
 
+For ElevenLabs you need:
+
 ```ini
+ENGINE=elevenlabs
 ELEVENLABS_API_KEY=sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 VOICE_ID=21m00Tcm4TlvDq8ikWAM
 MODEL=eleven_multilingual_v2
 ```
 
-- Get the API key: <https://elevenlabs.io/app/settings/api-keys>
-- Browse voices: <https://elevenlabs.io/app/voice-library>
+For Piper, the `.env` is optional — every value can be passed on the CLI.
 
 ## Run
 
-```bash
-# Use defaults from .env
-python tts.py script.txt -o my_voice.mp3
+### ElevenLabs (paid, premium quality)
 
-# Override per-run
-python tts.py script.txt \
-    -o my_voice.mp3 \
+```bash
+python tts.py script.txt -o my_voice.mp3
+```
+
+Override per-run:
+
+```bash
+python tts.py script.txt -o out.mp3 \
     --voice 21m00Tcm4TlvDq8ikWAM \
     --model eleven_multilingual_v2 \
     --stability 0.5 --similarity 0.75 --style 0.3 --speed 1.0 \
-    --chunk 1500 --workers 4
+    --workers 4
 ```
 
-### Useful flags
+### Piper (free, offline)
 
-| Flag           | Default | Meaning                                                 |
-| -------------- | ------- | ------------------------------------------------------- |
-| `--voice`      | `$VOICE_ID` | ElevenLabs voice id                                 |
-| `--model`      | `eleven_multilingual_v2` | also: `eleven_flash_v2_5`, `eleven_turbo_v2_5` |
-| `--stability`  | `0.5`   | 0.0 – 1.0 (lower = more expressive)                     |
-| `--similarity` | `0.75`  | 0.0 – 1.0 (higher = closer to the reference voice)      |
-| `--style`      | `0.3`   | 0.0 – 1.0 (style exaggeration)                          |
-| `--speed`      | `1.0`   | 0.7 – 1.2 typical                                        |
-| `--chunk`      | `1500`  | chars per chunk (lower = smaller HTTP requests)         |
-| `--workers`    | `4`     | parallel HTTP requests (start at 4, raise if no 429s)   |
-| `--timeout`    | `90`    | per-request timeout in seconds                          |
-| `--retries`    | `5`     | retries per chunk on 429/5xx/network errors             |
-| `--backoff`    | `5.0`   | linear backoff base in seconds (`backoff * attempt`)    |
+Download a voice once. Catalog: <https://github.com/rhasspy/piper/blob/master/VOICES.md>
+
+```bash
+mkdir -p voices && cd voices
+# English (US) — Amy, medium quality
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+cd ..
+```
+
+Each voice = `.onnx` (model) + `.onnx.json` (config). Both must sit in the same folder.
+
+Then synthesize:
+
+```bash
+python tts.py script.txt -o out.mp3 \
+    --engine piper \
+    --piper-model voices/en_US-amy-medium.onnx \
+    --piper-length-scale 1.0
+```
+
+Increase `--piper-length-scale` to slow down (e.g. `1.2`), decrease to speed up (e.g. `0.9`).
+
+## Flags
+
+| Flag                  | Default                    | Engine        | Meaning                                                   |
+| --------------------- | -------------------------- | ------------- | --------------------------------------------------------- |
+| `--engine`            | `elevenlabs`               | both          | `elevenlabs` or `piper`                                   |
+| `-o, --output`        | `output.mp3`               | both          | output MP3 path                                           |
+| `--chunk`             | `1500`                     | both          | chars per sentence-aware chunk                            |
+| `--workers`           | `4`                        | ElevenLabs    | parallel HTTP requests                                    |
+| `--voice`             | `$VOICE_ID`                | ElevenLabs    | voice id                                                  |
+| `--model`             | `eleven_multilingual_v2`   | ElevenLabs    | model id                                                  |
+| `--stability`         | `0.5`                      | ElevenLabs    | 0.0 – 1.0                                                  |
+| `--similarity`        | `0.75`                     | ElevenLabs    | 0.0 – 1.0                                                  |
+| `--style`             | `0.3`                      | ElevenLabs    | 0.0 – 1.0                                                  |
+| `--speed`             | `1.0`                      | ElevenLabs    | 0.7 – 1.2 typical                                         |
+| `--timeout`           | `90`                       | ElevenLabs    | per-request timeout (s)                                   |
+| `--retries`           | `5`                        | ElevenLabs    | retries per chunk on 429/5xx/network                      |
+| `--backoff`           | `5.0`                      | ElevenLabs    | linear backoff base (`backoff * attempt`)                 |
+| `--piper-model`       | —                          | Piper         | path to `.onnx` model                                     |
+| `--piper-length-scale`| `1.0`                      | Piper         | speak rate (>1 slower, <1 faster)                         |
 
 ## Exit codes
 
@@ -82,8 +120,14 @@ python tts.py script.txt \
 - `1` — synthesis failed (auth / quota / chunks gave up)
 - `2` — bad input (missing `.env` value, missing input file, bad CLI arg)
 
-## Pricing & limits
+## Cost / limits
 
-This script makes **paid API calls**. Each character billed at your plan's rate. Concurrency is limited per plan — start with 4 workers and raise only if your plan supports more.
+**ElevenLabs free tier** gives ~10 000 chars/month — enough to test, not for production. Starter (`$5/month`) raises that to 30 000, Creator (`$22/month`) to 100 000. If you hit `429`, drop `--workers` first; only then upgrade your plan.
 
-Free-tier keys won't work for any non-trivial workload — ElevenLabs blocks free-tier `xi-api-key` requests for some voices and slaps `429` aggressively. Buy a Starter plan or use the public free voices that are explicitly marked as such in the voice library.
+**Piper** is FOSS (MIT) and runs entirely on your machine. There are no per-character fees, no rate limits, no internet. Quality of `medium` voices is reasonable for most narration; `high` quality voices sound noticeably better but cost more CPU. `x_low` voices are tiny but robotic.
+
+## Picking between the two
+
+- Need ad-quality narration? → ElevenLabs.
+- Bulk processing, no budget, or paranoid about sending text to a third party? → Piper.
+- Best of both: prototype with Piper, ship final cuts with ElevenLabs.
